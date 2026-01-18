@@ -5,6 +5,17 @@ import matplotlib.pyplot as plt
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 import io  # 用于PDF下载
+import matplotlib.font_manager as fm  # 新增：字体管理
+import os  # 新增：路径处理
+
+# 配置中文字体（替换为您的字体文件名）
+font_path = 'NotoSansTC-Regular.ttf'  # 假设上传到仓库根目录
+if os.path.exists(font_path):
+    prop = fm.FontProperties(fname=font_path)
+    plt.rcParams['font.family'] = prop.get_name()
+    plt.rcParams['axes.unicode_minus'] = False  # 解决负号问题
+else:
+    st.warning("字体文件未找到，请上传 NotoSansTC-Regular.ttf 到仓库。")
 
 # Oryza sativa codon usage table (frequency per thousand, from Kazusa)
 rice_codon_table = {
