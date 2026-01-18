@@ -2,3 +2,5 @@ streamlit
 biopython
 matplotlib
 reportlab
+transformers
+torch
