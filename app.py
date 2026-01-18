@@ -54,15 +54,8 @@ def load_model():
 
 tokenizer, model = load_model()
 
-# 获取同义密码子列表（用于随机初始）
+# 构建同义密码子列表
 standard_table = CodonTable.unambiguous_dna_by_name["Standard"]
-synonymous_codons = {}
-for aa in standard_table.forward_table:
-    if aa not in synonymous_codons:
-        synonymous_codons[aa] = []
-    synonymous_codons[aa].append(standard_table.forward_table[aa])  # 错误：forward_table是codon:aa，需要反转
-
-# 修正：构建同义codons
 synonymous_codons = {}
 for codon, aa in standard_table.forward_table.items():
     if aa not in synonymous_codons:
@@ -97,14 +90,17 @@ def llm_optimize(aa_seq, mask_rate=0.2):
         logits = model(**inputs).logits
     mask_indices = (inputs.input_ids[0] == tokenizer.mask_token_id).nonzero(as_tuple=True)[0]
     predicted_ids = logits[0, mask_indices].argmax(-1)
-    predicted_codons = tokenizer.decode(predicted_ids).split()
+    predicted_codons = tokenizer.batch_decode(predicted_ids)  # 批量解码
     
     # 替换masked
-    for idx, mask_idx in enumerate(mask_indices):
-        if idx < len(predicted_codons):
-            masked_codons[mask_idx.item() - 1] = predicted_codons[idx]  # 调整索引（忽略[CLS]）
+    pred_idx = 0
+    for i in range(len(masked_codons)):
+        if masked_codons[i] == tokenizer.mask_token:
+            if pred_idx < len(predicted_codons):
+                masked_codons[i] = predicted_codons[pred_idx]
+                pred_idx += 1
     
-    return ''.join(masked_codons).replace(' ', '')
+    return ''.join(masked_codons)
 
 # CAI计算
 def calculate_cai(dna_seq, codon_table=rice_codon_table):
@@ -128,26 +124,38 @@ def calculate_cai(dna_seq, codon_table=rice_codon_table):
 st.title("日本晴稻密码子优化对比演示（规则 vs. 大模型）")
 st.write("输入DNA序列，翻译为氨基酸后，进行规则和大模型优化对比。适用于Hinohikari育种。")
 
-# 输入
-dna_input = st.text_area("DNA序列（ORF，3的倍数）", height=200)
+# 使用session_state管理输入
+if 'dna_input' not in st.session_state:
+    st.session_state.dna_input = ""
+
+# 输入框
+dna_input = st.text_area("DNA序列（ORF，3的倍数）", value=st.session_state.dna_input, height=200)
+
 if st.button("加载默认示例: Badh2基因 (Oryza sativa)"):
     default_dna = "atggccacggcgatcccgcagcggcagctcttcgtcgccggcgagtggcgcgcccccgcgctcggccgccgcctccccgtcgtcaaccccgccaccgagtcccccatcggcgagatcccggcgggcacggcggaggacgtggacgcggcggtggcggcggcgcgggaggcgctgaagaggaaccggggccgcgactgggcgcgcgcgccgggcgccgtccgggccaagtacctccgcgcaatcgcggccaagataatcgagaggaaatctgagctggactagagacgcttgattgtgggaagcctcttgatgaagcagcatgggacatggacgatgttgctggatgctttgagtactttgcagatcttgcagaatccttggacaaaaggcaaaatgcacctgtctctcttccaatggaaaactttaaatgctatcttcggaaagagcctatcgggtagttgggttgatcacaccttggaactatcctctcctgatggcaacatggaaggtagctcctgccctggctgctggctgtacagctgtactaaaaccatctgaattggcttccgtgacttgtttggagcttgctgatgtgtgtaaagaggttggtcttccttcaggtgtgctaaacatagtgactggattaggttctgaagccggtgctcctttgtcatcacaccctggtgtagacaaggttgcatttactgggagttatgaaactggtaaaaagattatggcttcagctgctcctatggttaagcctgtttcactggaacttggtggaaaaagtcctatagtggtgtttgatgatgttgatgttgaaaaagctgttgagtggactctctttggttgcttttggaccaatggccagatttgcagtgcaacatcgcgtcttattcttcataaaaaaatcgctaaagaatttcaagaaaggatggttgcatgggccaaaaatattaaggtgtcagatccacttgaagagggttgcaggcttgggcccgttgttagtgaaggacagtatgagaagattaagcaatttgtatctaccgccaaaagccaaggtgctaccattctgactggtggggttagacccaagcatctggagaaaggtttctatattgaacccacaatcattactgatgtcgatacatcaatgcaaatttggagggaagaagttttttggtccagtgctctgtgtgaaagaatttagcactgaagaagaagccattgaattggccaacgatactcattatggtctggctggtgctgtgctttccggtgaccgcgagcgatgccagagattaactgaggagatcgatgccggaatttatctgggtgaactgctcgcaaccctgcttctgccaagctccatggggcgggaacaagcgcagcggctttggacgcgagctcggagaagggggcattgacaactaccttagcgtcaagcaagtgacggagtacgcctccgatgagccgtgggatggtacaaatccccttccaagctgtaa"
-    dna_input = default_dna
-    st.text_area("DNA序列", default_dna, key="default")
+    st.session_state.dna_input = default_dna
+    st.rerun()  # 刷新页面更新输入框
 
 if st.button("优化对比"):
-    if len(dna_input) % 3 != 0:
-        st.error("DNA长度必须是3的倍数。")
+    input_value = dna_input.upper().replace(" ", "")  # 清理输入
+    orig_len = len(input_value)
+    if orig_len % 3 != 0:
+        # 自动截断到3的倍数
+        input_value = input_value[: (orig_len // 3) * 3]
+        st.warning(f"输入DNA长度 {orig_len} 不是3的倍数，已自动截断到 {len(input_value)} bp（丢弃尾部碱基）。")
+    
+    if len(input_value) == 0:
+        st.error("有效DNA序列为空，请输入有效序列。")
     else:
         try:
-            aa_seq = str(Seq(dna_input).translate())
+            aa_seq = str(Seq(input_value).translate())
             rule_dna = rule_optimize(aa_seq)
             llm_dna = llm_optimize(aa_seq)
-            orig_cai = calculate_cai(dna_input.upper())
+            orig_cai = calculate_cai(input_value)
             rule_cai = calculate_cai(rule_dna)
             llm_cai = calculate_cai(llm_dna)
 
-            st.subheader("原始DNA: " + dna_input[:100] + "...")
+            st.subheader("原始DNA: " + input_value[:100] + "...")
             st.subheader("规则优化DNA: " + rule_dna[:100] + "...")
             st.subheader("大模型优化DNA (CodonBERT): " + llm_dna[:100] + "...")
 
